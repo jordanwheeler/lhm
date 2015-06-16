@@ -15,7 +15,7 @@ module Lhm
         @timeout_seconds = INITIAL_TIMEOUT
         @stride = options[:stride] || DEFAULT_STRIDE
         @allowed_lag = options[:allowed_lag] || DEFAULT_MAX_ALLOWED_LAG
-        @slave_connection = options[:slave_connection]
+        @get_current_shard = options[:get_current_shard]
       end
 
       def execute
@@ -44,14 +44,30 @@ module Lhm
       end
 
       def slave_hosts
-        slaves = get_slaves.map { |slave_host| slave_host.partition(':')[0] }
-          .delete_if { |slave| slave == 'localhost' || slave == '127.0.0.1' }
-        Lhm.logger.info "Detected slaves: #{slaves.join(',')}"
-        slaves
+        @slave_hosts ||= get_slave_hosts
       end
 
-      def get_slaves
-        @connection.select_values(SQL_SELECT_SLAVE_HOSTS)
+      def get_slave_hosts
+        slave_hosts = []
+        slaves = slaves_for_connection(@connection)
+        while slaves.any? do
+          slave = slaves.pop
+          if slave_hosts.exclude?(slave) && conn = slave_connection(slave)
+            slave_hosts << slave
+            slaves << slaves_for_connection(conn)
+            slaves.flatten!
+          end
+        end
+        slave_hosts
+      end
+
+      def slaves_for_connection(connection)
+        select_slave_hosts(connection).map { |slave_host| slave_host.partition(':')[0] }
+          .delete_if { |slave| slave == 'localhost' || slave == '127.0.0.1' }
+      end
+
+      def select_slave_hosts(connection)
+        connection.select_values(SQL_SELECT_SLAVE_HOSTS)
       end
 
       def max_current_slave_lag
@@ -74,14 +90,20 @@ module Lhm
       end
 
       def slave_connection(slave)
-        unless @slave_connection
-          adapter_method = defined?(Mysql2) ? 'mysql2_connection' : 'mysql_connection'
-          config = ActiveRecord::Base.connection_pool.spec.config.dup
-          config[:host] = slave
-          ActiveRecord::Base.send(adapter_method, config)
-        else
-          @slave_connection.call(slave)
+        adapter_method = defined?(Mysql2) ? 'mysql2_connection' : 'mysql_connection'
+        begin
+          ActiveRecord::Base.send(adapter_method, slave_config(slave))
+        rescue Mysql2::Error => e
+          Lhm.logger.info "Error conecting to #{slave}: #{e}"
+          nil
         end
+      end
+
+      def slave_config(slave)
+        config = ActiveRecord::Base.connection_pool.spec.config.dup
+        config = config[@get_current_shard.call.to_sym] if @get_current_shard && @get_current_shard.call
+        config[:host] = slave
+        config
       end
 
       # This method fetch the Seconds_Behind_Master, when exec_query is no available, on AR 2.3.
