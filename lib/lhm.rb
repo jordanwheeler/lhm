@@ -108,6 +108,18 @@ module Lhm
     @@connection = connection
   end
 
+  def self.setup(adapter)
+    @@adapter = adapter
+  end
+
+  def self.adapter
+    @@adapter ||=
+      begin
+        raise 'Please call Lhm.setup' unless defined?(ActiveRecord)
+        ActiveRecord::Base.connection
+      end
+  end
+
   def connection
     @@connection ||=
       begin
