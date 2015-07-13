@@ -52,9 +52,12 @@ module Lhm
       def get_slaves
         slaves = []
         slave_hosts = master_slave_hosts
+        Lhm.logger.info("master_slave_hosts: #{master_slave_hosts}")
         while slave_hosts.any? do
           host = slave_hosts.pop
+          Lhm.logger.info("host: #{host}")
           slave = Slave.new(host, @get_config)
+          Lhm.logger.info("slave.slave_hosts: #{slave.slave_hosts}")
           if slaves.map(&:host).exclude?(host) && slave.connection
             slaves << slave
             slave_hosts << slave.slave_hosts
@@ -107,6 +110,7 @@ module Lhm
 
       def config(get_config)
         attrs = get_config ? get_config.call : ActiveRecord::Base.connection_pool.spec.config.dup
+        Lhm.logger.info("!!!!!!! GOT CONFIG: #{attrs}")
         {
           :host => @host,
           :username => attrs['username'],
